@@ -6,6 +6,7 @@ from matplotlib.font_manager import FontProperties, findSystemFonts
 from collections import Counter
 from sklearn.linear_model import LinearRegression
 import numpy as np
+from prophet import Prophet
 
 # --------------------------
 # 路径获取函数
@@ -69,14 +70,64 @@ output_file = get_output_file_path('销售额趋势.png')
 plt.savefig(output_file)
 plt.close()
 
-# 线性回归预测下一期销售额
-X = np.arange(len(df)).reshape(-1,1)
-y = df['销售金额'].values
-model = LinearRegression()
-model.fit(X, y)
-next_index = np.array([[len(df)]])
-predicted_sales = model.predict(next_index)[0]
-print(f"预测2025年7月1日之后最近一期的销售额为：{predicted_sales:.0f}")
+# Prophet模型预测下一期销售额
+print("开始使用Prophet模型进行销售额预测...")
+
+try:
+    # 准备Prophet所需的数据格式
+    prophet_df = df[['开奖时间', '销售金额']].copy()
+    prophet_df.columns = ['ds', 'y']  # Prophet要求列名为'ds'和'y'
+
+    # 创建Prophet模型
+    model = Prophet(
+        yearly_seasonality=True,    # 年度季节性
+        weekly_seasonality=True,    # 周度季节性
+        daily_seasonality=False,    # 日度季节性（数据按天，不需要）
+        seasonality_mode='multiplicative',  # 乘法季节性
+        changepoint_prior_scale=0.05,  # 趋势变化点的灵活性
+        seasonality_prior_scale=10.0   # 季节性的强度
+    )
+
+    # 拟合模型
+    print("正在拟合Prophet模型...")
+    model.fit(prophet_df)
+
+    # 创建未来时间点进行预测
+    last_date = prophet_df['ds'].max()
+    if isinstance(last_date, pd.Timestamp):
+        future_dates = pd.date_range(start=last_date + pd.Timedelta(days=1), 
+                                    periods=1, freq='D')  # 只预测下一期
+    else:
+        # 如果last_date不是Timestamp，转换为datetime
+        last_date = pd.to_datetime(last_date)
+        future_dates = pd.date_range(start=last_date + pd.Timedelta(days=1), 
+                                    periods=1, freq='D')
+    future_df = pd.DataFrame({'ds': future_dates})
+
+    # 进行预测
+    forecast = model.predict(future_df)
+
+    # 获取下一期的预测值
+    next_prediction = forecast.iloc[0]
+    predicted_sales = next_prediction['yhat']
+    prediction_lower = next_prediction['yhat_lower']
+    prediction_upper = next_prediction['yhat_upper']
+
+    print(f"Prophet模型预测结果:")
+    print(f"下一期销售额预测值: {predicted_sales:.0f}")
+    print(f"预测区间: [{prediction_lower:.0f}, {prediction_upper:.0f}]")
+
+except Exception as e:
+    print(f"Prophet模型拟合失败: {e}")
+    print("回退到线性回归模型")
+    # 回退到线性回归
+    X = np.arange(len(df)).reshape(-1,1)
+    y = df['销售金额'].values
+    model = LinearRegression()
+    model.fit(X, y)
+    next_index = np.array([[len(df)]])
+    predicted_sales = model.predict(next_index)[0]
+    print(f"线性回归预测下一期销售额为：{predicted_sales:.0f}")
 
 # 2. 前区与后区号码频率统计与可视化
 front_nums = []
@@ -147,4 +198,41 @@ plt.tight_layout()
 output_file = get_output_file_path('散点图.png')
 plt.savefig(output_file)
 plt.close()
+
+# --------------------------
+# 新功能：统计并可视化周一、周三、周六开奖号码出现频率
+# --------------------------
+weekday_map = {'周一': 'monday', '周三': 'wednesday', '周六': 'saturday'}
+for weekday, en_name in weekday_map.items():
+    weekday_df = df[df['周几'] == weekday]
+    weekday_front_nums = []
+    weekday_back_nums = []
+    for code in weekday_df['开奖号码']:
+        nums = code.split()
+        weekday_front_nums.extend(nums[:5])
+        weekday_back_nums.extend(nums[5:])
+    front_counter = Counter(weekday_front_nums)
+    back_counter = Counter(weekday_back_nums)
+    # 前区可视化
+    plt.figure(figsize=(12,5))
+    plt.bar(list(front_counter.keys()), list(front_counter.values()), color='#4C72B0')
+    plt.title(f'{weekday} 前区号码出现频率')
+    plt.xlabel('号码')
+    plt.ylabel('出现次数')
+    plt.tight_layout()
+    output_file = get_output_file_path(f'{en_name}_front_freq.png')
+    plt.savefig(output_file)
+    plt.close()
+    # 后区可视化
+    plt.figure(figsize=(8,5))
+    plt.bar(list(back_counter.keys()), list(back_counter.values()), color='#C44E52')
+    plt.title(f'{weekday} 后区号码出现频率')
+    plt.xlabel('号码')
+    plt.ylabel('出现次数')
+    plt.tight_layout()
+    output_file = get_output_file_path(f'{en_name}_back_freq.png')
+    plt.savefig(output_file)
+    plt.close()
+
+
 
